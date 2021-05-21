@@ -736,6 +736,8 @@ bool os::Linux::manually_expand_stack(JavaThread * t, address addr) {
 // create new thread
 
 // Thread start routine for all newly created threads
+// 第六部分
+// 所有新建线程的启动逻辑
 static void *thread_native_entry(Thread *thread) {
 
   thread->record_stack_base_and_size();
@@ -751,9 +753,11 @@ static void *thread_native_entry(Thread *thread) {
 
   thread->initialize_thread_current();
 
+  //通过JavaThread拿到OSThread
   OSThread* osthread = thread->osthread();
   Monitor* sync = osthread->startThread_lock();
 
+  //设置内核线程id
   osthread->set_thread_id(os::current_thread_id());
 
   log_info(os, thread)("Thread is alive (tid: " UINTX_FORMAT ", pthread id: " UINTX_FORMAT ").",
@@ -776,10 +780,16 @@ static void *thread_native_entry(Thread *thread) {
     MutexLocker ml(sync, Mutex::_no_safepoint_check_flag);
 
     // notify parent thread
+    // 设置OSThread的线程状态为INITIALIZED
     osthread->set_state(INITIALIZED);
+    // 唤醒所有的线程
     sync->notify_all();
 
     // wait until os::start_thread()
+    // 等待OSThread线程状态改变：OSThread创建后不会立即执行，会等os::start_thread()的通知，即等待OSThread状态变为runnable
+    // 接下来须先回到JVM_StartThread方法，看下Thread::start
+
+    //不停查看线程的当前状态是不是INITIALIZED，如果是，调用了sync->wait()的方法等待
     while (osthread->get_state() == INITIALIZED) {
       sync->wait_without_safepoint_check();
     }
@@ -787,7 +797,9 @@ static void *thread_native_entry(Thread *thread) {
 
   assert(osthread->pthread_id() != 0, "pthread_id was not set as expected");
 
+  // 第十部分
   // call one more level start routine
+  //被唤醒后回调JavaThread::run
   thread->call_run();
 
   // Note: at this point the thread object may already have deleted itself.
@@ -800,22 +812,36 @@ static void *thread_native_entry(Thread *thread) {
   return 0;
 }
 
+/**
+ * 第五部分
+ *
+ * OSThread是一个平台相关的线程，由JavaThread对象创建并进行管理。在OSThread的创建过程中，会通过
+ * pthread方法创建一个真正意义上的底层级线程。
+ * @param thread
+ * @param thr_type os::compiler_thread 或 os::java_thread
+ * @param req_stack_size 线程栈的大小
+ * @return
+ */
 bool os::create_thread(Thread* thread, ThreadType thr_type,
                        size_t req_stack_size) {
   assert(thread->osthread() == NULL, "caller responsible");
 
   // Allocate the OSThread object
+  // 为OSThread对象分配内存
   OSThread* osthread = new OSThread(NULL, NULL);
   if (osthread == NULL) {
     return false;
   }
 
   // set the correct thread state
+  // 设置OSThread的线程类型
   osthread->set_thread_type(thr_type);
 
   // Initial state is ALLOCATED but not INITIALIZED
+  // 设置OSThread的线程状态(初始状态是ALLOCATED而非INITIALIZED)
   osthread->set_state(ALLOCATED);
 
+  // 关联JavaThread与OSThread（让JavaThread的OSThread指针指向新建的OSThread）
   thread->set_osthread(osthread);
 
   // init thread attributes
@@ -824,6 +850,7 @@ bool os::create_thread(Thread* thread, ThreadType thr_type,
   pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 
   // Calculate stack size if it's not specified by caller.
+  // 如果调用者没有指定stack size，就需要计算stack size
   size_t stack_size = os::Posix::get_initial_stack_size(thr_type, req_stack_size);
   // In the Linux NPTL pthread implementation the guard size mechanism
   // is not implemented properly. The posix standard requires adding
@@ -848,9 +875,12 @@ bool os::create_thread(Thread* thread, ThreadType thr_type,
 
   {
     pthread_t tid;
+      //使用pthread创建平台级线程osthread（内核态线程），该线程执行thread_native_entry方法(以前
+      // 叫做java_start方法)，JavaThread作为參数
     int ret = pthread_create(&tid, &attr, (void* (*)(void*)) thread_native_entry, thread);
 
     char buf[64];
+    //如果返回值是0，表示平台级线程创建成功；否则，线程创建失败
     if (ret == 0) {
       log_info(os, thread)("Thread started (pthread id: " UINTX_FORMAT ", attributes: %s). ",
         (uintx) tid, os::Posix::describe_pthread_attr(buf, sizeof(buf), &attr));
@@ -870,15 +900,19 @@ bool os::create_thread(Thread* thread, ThreadType thr_type,
 
     if (ret != 0) {
       // Need to clean up stuff we've allocated so far
+      //如果osthread创建失败,就把JavaThread的OSThread指针设置为NULL
       thread->set_osthread(NULL);
       delete osthread;
       return false;
     }
 
     // Store pthread info into the OSThread
+    // 将pthread线程信息存储到OSThread中
+    //将tid（新建的底层级线程的标识符，通过该标识符管理该线程）存入OSThread
     osthread->set_pthread_id(tid);
 
     // Wait until child thread is either initialized or aborted
+    // 等待，直到子线程被initialized或aborted（不懂？？？）
     {
       Monitor* sync_with_child = osthread->startThread_lock();
       MutexLocker ml(sync_with_child, Mutex::_no_safepoint_check_flag);
@@ -971,11 +1005,13 @@ bool os::create_attached_thread(JavaThread* thread) {
   return true;
 }
 
+//第九部分
 void os::pd_start_thread(Thread* thread) {
   OSThread * osthread = thread->osthread();
   assert(osthread->get_state() != INITIALIZED, "just checking");
   Monitor* sync_with_child = osthread->startThread_lock();
   MutexLocker ml(sync_with_child, Mutex::_no_safepoint_check_flag);
+  //唤醒
   sync_with_child->notify();
 }
 

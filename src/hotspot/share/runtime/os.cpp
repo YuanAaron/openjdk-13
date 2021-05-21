@@ -855,11 +855,12 @@ int os::random() {
 // we are working on it.  Non-Java threads that start Java threads either have
 // to do so in a context in which races are impossible, or should do appropriate
 // locking.
-
+// 第八部分
 void os::start_thread(Thread* thread) {
   // guard suspend/resume
   MutexLocker ml(thread->SR_lock(), Mutex::_no_safepoint_check_flag);
   OSThread* osthread = thread->osthread();
+  // 改变OSThread线程状态为RUNNABLE，但是这里没有唤醒
   osthread->set_state(RUNNABLE);
   pd_start_thread(thread);
 }

@@ -27,6 +27,7 @@
 #include "runtime/osThread.hpp"
 
 OSThread::OSThread(OSThreadStartFunc start_proc, void* start_parm) {
+  //将值初始化为初始值（0或NULL），该方法在os/linux/osThread_linux.cpp下
   pd_initialize();
   set_start_proc(start_proc);
   set_start_parm(start_parm);

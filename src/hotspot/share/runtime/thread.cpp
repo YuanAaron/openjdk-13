@@ -371,6 +371,7 @@ void Thread::register_thread_stack_with_NMT() {
 }
 #endif // INCLUDE_NMT
 
+//第十一部分
 void Thread::call_run() {
   DEBUG_ONLY(_run_state = CALL_RUN;)
 
@@ -510,11 +511,12 @@ void Thread::set_priority(Thread* thread, ThreadPriority priority) {
   (void)os::set_priority(thread, priority);
 }
 
-
+//第七部分
 void Thread::start(Thread* thread) {
   // Start is different from resume in that its safety is guaranteed by context or
   // being called from a Java method synchronized on the Thread object.
   if (!DisableStartThread) {
+    //判断是否为Java线程，如果是，将线程的状态设置为RUNNABLE
     if (thread->is_Java_thread()) {
       // Initialize the thread state to RUNNABLE before starting this thread.
       // Can not set it after the thread started because we do not know the
@@ -523,6 +525,7 @@ void Thread::start(Thread* thread) {
       java_lang_Thread::set_thread_status(((JavaThread*)thread)->threadObj(),
                                           java_lang_Thread::RUNNABLE);
     }
+    // 启动OSThread
     os::start_thread(thread);
   }
 }
@@ -1815,16 +1818,25 @@ void JavaThread::block_if_vm_exited() {
 static void compiler_thread_entry(JavaThread* thread, TRAPS);
 static void sweeper_thread_entry(JavaThread* thread, TRAPS);
 
+/**
+ * 第四部分
+ * @param entry_point 函数名称，线程创建成功之后会根据这个函数名称调用对应的函数，即run()方法
+ * @param stack_sz
+ */
 JavaThread::JavaThread(ThreadFunction entry_point, size_t stack_sz) :
                        Thread() {
+  //初始化
   initialize();
   _jni_attach_state = _not_attaching_via_jni;
+  //为这个JavaThread设置入口方法（C++调用java代码，run）
   set_entry_point(entry_point);
   // Create the native thread itself.
   // %note runtime_23
+  // 判断当前线程是编译线程还是java线程
   os::ThreadType thr_type = os::java_thread;
   thr_type = entry_point == &compiler_thread_entry ? os::compiler_thread :
                                                      os::java_thread;
+  //根据平台调用以下方法创建一个OSThread对象
   os::create_thread(this, thr_type, stack_sz);
   // The _osthread may be NULL here because we ran out of memory (too many threads active).
   // We need to throw and OutOfMemoryError - however we cannot do this here because the caller
@@ -1836,6 +1848,13 @@ JavaThread::JavaThread(ThreadFunction entry_point, size_t stack_sz) :
   // by creator! Furthermore, the thread must also explicitly be added to the Threads list
   // by calling Threads:add. The reason why this is not done here, is because the thread
   // object must be fully initialized (take a look at JVM_Start)
+
+  //在这里，由于内部不足的原因，_osthread有可能为NULL。我们需要抛出OutofMemoryError，但是现在我们还不能这样做，因为该方法的调用者
+  //可能持有锁。在抛出异常前，必须确保所有的锁都被释放。（因为抛异常包括创建异常对象和初始化，而通过JavaCall(C++调用Java)初始化该对象
+  // 将会离开JVM，进行所有的锁必须被释放）
+
+  //此时这条线程仍处于挂起状态，线程必须由创建者显式地启动。而且线程还必须显式地通过调用Thread:add方法被添加到Threads list中。之所以
+  //还没有这样做的原因是线程对象必须被完全初始化（参见JVM_Start）
 }
 
 JavaThread::~JavaThread() {
@@ -1889,9 +1908,11 @@ void JavaThread::pre_run() {
   // empty - see comments in run()
 }
 
+// 第十二部分
 // The main routine called by a new Java thread. This isn't overridden
 // by subclasses, instead different subclasses define a different "entry_point"
 // which defines the actual logic for that kind of thread.
+// Java线程调用的主例程
 void JavaThread::run() {
   // initialize thread-local alloc buffer related fields
   this->initialize_tlab();
@@ -1909,6 +1930,7 @@ void JavaThread::run() {
 
   // Thread is now sufficiently initialized to be handled by the safepoint code as being
   // in the VM. Change thread state from _thread_new to _thread_in_vm
+  // 线程状态从_thread_new变为_thread_in_vm
   ThreadStateTransition::transition(this, _thread_new, _thread_in_vm);
   // Before a thread is on the threads list it is always safe, so after leaving the
   // _thread_new we should emit a instruction barrier. The distance to modified code
@@ -1934,6 +1956,7 @@ void JavaThread::run() {
   thread_main_inner();
 }
 
+//第十三部分（完）
 void JavaThread::thread_main_inner() {
   assert(JavaThread::current() == this, "sanity check");
   assert(this->threadObj() != NULL, "just checking");
@@ -1948,7 +1971,7 @@ void JavaThread::thread_main_inner() {
       this->set_native_thread_name(this->get_thread_name());
     }
     HandleMark hm(this);
-    this->entry_point()(this, this);
+    this->entry_point()(this, this); //有人说调用entry_point就是调用thread_entry中的JavaCalls，最终回调run方法
   }
 
   DTRACE_THREAD_PROBE(stop, this);
